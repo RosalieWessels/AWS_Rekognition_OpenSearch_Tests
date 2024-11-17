@@ -8,6 +8,7 @@ import uuid
 from dotenv import load_dotenv
 import uuid
 import json
+from opensearchpy import OpenSearch
 
 # Load environment variables from .env.local file
 load_dotenv('.env.local')
@@ -26,6 +27,19 @@ console.setLevel(level=logging.DEBUG)
 formatter =  logging.Formatter('%(levelname)s : %(message)s')
 console.setFormatter(formatter)
 logger.addHandler(console)
+
+opensearch_endpoint = os.getenv('OPENSEARCH_ENDPOINT')
+
+# Initialize OpenSearch client
+opensearch_client = OpenSearch(
+    hosts=[opensearch_endpoint],
+    http_auth=(os.getenv('OPENSEARCH_USERNAME'), os.getenv('OPENSEARCH_PASSWORD')),
+    use_ssl=True,
+    verify_certs=True,
+)
+
+# OpenSearch index name
+index_name = "images_index"
 
 def lambda_handler(event, context):
     # Initialize the Rekognition and S3 clients
@@ -47,6 +61,20 @@ def lambda_handler(event, context):
             logger.info(f"Collection '{collection_id}' created successfully.")
         except botocore.exceptions.ClientError as error:
             logger.error(f"An error occurred: {error}")
+
+    def index_metadata_in_opensearch(s3_location, faces, objects):
+        """Index metadata into OpenSearch."""
+        try:
+            document = {
+                "s3_location": s3_location,
+                "faces_in_picture": faces,
+                "objects_in_picture": objects,
+            }
+            print(document)
+            response = opensearch_client.index(index=index_name, body=document)
+            logger.info(f"Successfully indexed document into OpenSearch: {response}")
+        except Exception as e:
+            logger.error(f"Failed to index metadata into OpenSearch: {str(e)}")
 
     def upload_new_face_to_aws(image_byte_arr, bucket_name):
         # Define the destination bucket and key
@@ -197,8 +225,8 @@ def lambda_handler(event, context):
             try:
                 s3_client.copy_object(
                     Bucket=bucket_name,
-                    CopySource={'Bucket': bucket_name, 'Key': destination_key},
-                    Key=destination_key,
+                    CopySource={'Bucket': bucket_name, 'Key': object_key},
+                    Key=object_key,
                     Metadata=metadata,
                     MetadataDirective='REPLACE'
                 )
@@ -208,6 +236,14 @@ def lambda_handler(event, context):
                 logger.error(f"Error tagging object {object_key}: {str(e)}")
             
             logger.info("Model run successfully on the image.")
+
+            # Index metadata in OpenSearch
+            index_metadata_in_opensearch(
+                s3_location=f"s3://{bucket_name}/{object_key}",
+                faces=meta_data_dict,
+                objects=metadata["objects_in_picture"]
+            )
+
             return response
         except botocore.exceptions.ClientError as error:
             logger.error(f"An error occurred while running the model: {error}")
