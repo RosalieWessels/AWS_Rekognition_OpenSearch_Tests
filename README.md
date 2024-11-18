@@ -20,3 +20,5 @@ Check `lambda_function.py` for the full Lambda function code.
 When searching for an image on the website using natural language, it will make a query to the OpenSearch index, and return all the relevant images (which are then shown on screen).
 
 Next.js front end code is here: [Scrapbook Github Repo](https://github.com/sage31/INRIX-AWS-Hackathon/tree/Rosalie-w-file-upload) (in Rosalie-w-file-upload branch). 
+
+Devpost for the whole project: [DevPost](https://devpost.com/software/scrapbook-6vz4o5)
