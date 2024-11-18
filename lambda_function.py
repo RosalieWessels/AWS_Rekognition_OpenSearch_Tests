@@ -5,35 +5,20 @@ import logging
 import io
 from PIL import Image, UnidentifiedImageError
 import uuid
-from dotenv import load_dotenv
-import uuid
 import json
 from opensearchpy import OpenSearch
-
-# Load environment variables from .env.local file
-load_dotenv('.env.local')
-
-# Get AWS credentials and region from environment variables
-aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
-aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-aws_session_token = os.getenv('AWS_SESSION_TOKEN')
-aws_region = os.getenv('AWS_REGION')
+import os
 
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-console = logging.StreamHandler()
-console.setLevel(level=logging.DEBUG)
-formatter =  logging.Formatter('%(levelname)s : %(message)s')
-console.setFormatter(formatter)
-logger.addHandler(console)
 
-opensearch_endpoint = os.getenv('OPENSEARCH_ENDPOINT')
+opensearch_endpoint = os.environ['OPENSEARCH_ENDPOINT']
 
 # Initialize OpenSearch client
 opensearch_client = OpenSearch(
     hosts=[opensearch_endpoint],
-    http_auth=(os.getenv('OPENSEARCH_USERNAME'), os.getenv('OPENSEARCH_PASSWORD')),
+    http_auth=(os.environ['OPENSEARCH_USERNAME'], os.environ['OPENSEARCH_PASSWORD']),
     use_ssl=True,
     verify_certs=True,
 )
@@ -110,8 +95,8 @@ def lambda_handler(event, context):
     def run_model_on_image(event):
         try:
             # Get bucket name and object key from the event triggered by S3
-            bucket_name = "scu-hackathon-bucket"  #TODO: event['Records'][0]['s3']['bucket']['name']
-            object_key = "photos/drivers4.jpg" #TODO: event['Records'][0]['s3']['object']['key']
+            bucket_name = event['Records'][0]['s3']['bucket']['name']
+            object_key = event['Records'][0]['s3']['object']['key']
             logger.info(f"Processing image from bucket: {bucket_name}, key: {object_key}")
             
             try:
@@ -223,12 +208,18 @@ def lambda_handler(event, context):
         
             # Add tags to the S3 object
             try:
+                # Retrieve the original object's metadata
+                original_metadata = s3_client.head_object(Bucket=bucket_name, Key=object_key)
+                original_content_type = original_metadata.get('ContentType', 'application/octet-stream')
+
                 s3_client.copy_object(
                     Bucket=bucket_name,
                     CopySource={'Bucket': bucket_name, 'Key': object_key},
                     Key=object_key,
                     Metadata=metadata,
-                    MetadataDirective='REPLACE'
+                    MetadataDirective='REPLACE',
+                    ContentType=original_content_type,
+                    ACL='public-read'
                 )
 
                 logger.info(f"Successfully tagged {object_key} in {bucket_name} with labels.")
@@ -238,12 +229,15 @@ def lambda_handler(event, context):
             logger.info("Model run successfully on the image.")
 
             # Index metadata in OpenSearch
-            index_metadata_in_opensearch(
-                s3_location=f"s3://{bucket_name}/{object_key}",
-                faces=meta_data_dict,
-                objects=metadata["objects_in_picture"]
-            )
-
+            try:
+                index_metadata_in_opensearch(
+                    s3_location=f"s3://{bucket_name}/{object_key}",
+                    faces=meta_data_dict,
+                    objects=metadata["objects_in_picture"]
+                )
+            except Exception as e:
+                logger.error("Failed to upload to opensearch")
+            
             return response
         except botocore.exceptions.ClientError as error:
             logger.error(f"An error occurred while running the model: {error}")
@@ -254,8 +248,3 @@ def lambda_handler(event, context):
    
     # Run the model on the image
     return run_model_on_image(event)
-
-#TODO: delete
-event = ""
-context = ""
-lambda_handler(event, context)
